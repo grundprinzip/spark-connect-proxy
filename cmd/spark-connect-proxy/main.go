@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/slok/go-http-metrics/middleware/std"
 	"log"
 	"math/rand"
 	"net"
@@ -21,6 +22,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	metrics "github.com/slok/go-http-metrics/metrics/prometheus"
+	"github.com/slok/go-http-metrics/middleware"
 )
 
 type SparkConnectProxy struct {
@@ -235,14 +239,23 @@ func main() {
 
 	proxy := NewSparkConnectProxy()
 
+	// Create our middleware.
+	mdlw := middleware.New(middleware.Config{
+		Recorder: metrics.NewRecorder(metrics.Config{}),
+	})
+
 	// Register some known backends
 	sparkURL1, _ := url.Parse("http://127.0.0.1:15002")
 	proxy.AddKnownBackend(sparkURL1)
 
 	// Create HTTP server that uses h2c for gRPC
+	proxyFunc := http.HandlerFunc(proxy.mainHandler)
+	// wrap the proxy function using the HTTP middleweare that is needed to expose metrics.
+	wrappedHandler := std.Handler("", mdlw, proxyFunc)
+
 	srv := &http.Server{
 		Addr:    ":8080",
-		Handler: h2c.NewHandler(http.HandlerFunc(proxy.mainHandler), &http2.Server{}),
+		Handler: h2c.NewHandler(wrappedHandler, &http2.Server{}),
 	}
 
 	listener, err := net.Listen("tcp", srv.Addr)
