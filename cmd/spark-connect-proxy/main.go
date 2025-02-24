@@ -3,14 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
-	"github.com/oklog/run"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/siderolabs/grpc-proxy/proxy"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 	"log"
 	"log/slog"
 	"math/rand"
@@ -19,7 +11,15 @@ import (
 	"os"
 	"sync"
 	"syscall"
-	"time"
+
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
+	"github.com/oklog/run"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/siderolabs/grpc-proxy/proxy"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
 )
@@ -51,7 +51,7 @@ func (p *SparkConnectProxy) AddKnownBackend(backend string) error {
 	defer p.mu.Unlock()
 	b, e := CreateSparkConnectBackend(backend)
 	if e != nil {
-		log.Fatalf("Error creating backend", e)
+		log.Fatalf("Error creating backend %v", e)
 		return e
 	}
 	p.knownBackends = append(p.knownBackends, b)
@@ -105,8 +105,6 @@ func interceptorLogger(l *slog.Logger) logging.Logger {
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
-
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
 	rpcLogger := logger.With("service", "gRPC/server", "component", "grpc-proxy")
 
@@ -120,7 +118,9 @@ func main() {
 	g := &run.Group{}
 
 	proxyService := NewSparkConnectProxy()
-	proxyService.AddKnownBackend("localhost:15002")
+	if err := proxyService.AddKnownBackend("localhost:15002"); err != nil {
+		log.Fatalf("Error adding known backend: %v", err)
+	}
 	router := CreateRouter(proxyService)
 
 	server := grpc.NewServer(
@@ -162,7 +162,7 @@ func main() {
 		return httpSrv.ListenAndServe()
 	}, func(err error) {
 		if err := httpSrv.Close(); err != nil {
-			log.Fatalf("failed to stop web server", "err", err)
+			log.Fatalf("failed to stop web server: %v", err)
 		}
 	})
 
@@ -170,7 +170,7 @@ func main() {
 	g.Add(run.SignalHandler(context.Background(), syscall.SIGINT, syscall.SIGTERM))
 
 	if err := g.Run(); err != nil {
-		log.Printf("program interrupted", "err", err)
+		log.Printf("program interrupted: %v", err)
 		os.Exit(1)
 	}
 }
