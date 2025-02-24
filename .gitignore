@@ -1,2 +1,6 @@
 main
 .idea
+.DS_Store
+
+# Binaries
+cmd/spark-connect-proxy/spark-connect-proxy

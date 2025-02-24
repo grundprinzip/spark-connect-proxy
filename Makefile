@@ -37,7 +37,26 @@ TAGS                      ?= netgo
 SHELL = bash
 GOFUMPT_SPLIT_LONG_LINES  := on
 
+BINARIES := cmd/spark-connect-proxy/spark-connect-proxy
+
+all: build
+
+build: $(BINARIES)
+
+cmd/spark-connect-proxy/spark-connect-proxy: $(GOFILES_BUILD)
+	@echo ">> BUILD, output = $@"
+	@cd $(dir $@) && $(GO) build -o $(notdir $@) $(BUILDFLAGS)
+	@printf '%s\n' '$(OK)'
+
 
 fmt:
 	@echo -n ">> glongci-lint: fix"
 	env GOFUMPT_SPLIT_LONG_LINES=$(GOFUMPT_SPLIT_LONG_LINES) golangci-lint run --fix
+
+
+test: $(BUILD_OUTPUT)
+	@echo ">> TEST, \"verbose\""
+	@$(foreach pkg, $(PKGS),\
+	    @echo -n "     ";\
+		$(GO) test -v -run '(Test|Example)' $(BUILDFLAGS) $(TESTFLAGS) $(pkg) || exit 1)
+
