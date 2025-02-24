@@ -1,33 +1,32 @@
 package main
 
 import (
-	"crypto/tls"
-	"encoding/json"
+	"context"
+	"fmt"
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
+	"github.com/oklog/run"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/slok/go-http-metrics/middleware/std"
+	"github.com/siderolabs/grpc-proxy/proxy"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"log"
+	"log/slog"
 	"math/rand"
 	"net"
 	"net/http"
-	"net/url"
+	"os"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/google/uuid"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
-	"net/http/httputil"
-
-	"github.com/prometheus/client_golang/prometheus"
-	metrics "github.com/slok/go-http-metrics/metrics/prometheus"
-	"github.com/slok/go-http-metrics/middleware"
+	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
 )
 
 type SparkConnectProxy struct {
-	// Mapping of session ID -> backend URL
-	sessionBackends map[string]*url.URL
 	// List of known backends from which new sessions pick randomly
-	knownBackends []*url.URL
+	knownBackends []proxy.Backend
 
 	// Protects sessionBackends and knownBackends
 	mu sync.RWMutex
@@ -42,37 +41,24 @@ func NewSparkConnectProxy() *SparkConnectProxy {
 	r := prometheus.NewRegistry()
 
 	return &SparkConnectProxy{
-		sessionBackends: make(map[string]*url.URL),
-		knownBackends:   []*url.URL{},
-		registry:        r,
+		knownBackends: make([]proxy.Backend, 0),
+		registry:      r,
 	}
 }
 
-func (p *SparkConnectProxy) AddKnownBackend(backend *url.URL) {
+func (p *SparkConnectProxy) AddKnownBackend(backend string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.knownBackends = append(p.knownBackends, backend)
+	b, e := CreateSparkConnectBackend(backend)
+	if e != nil {
+		log.Fatalf("Error creating backend", e)
+		return e
+	}
+	p.knownBackends = append(p.knownBackends, b)
+	return nil
 }
 
-func (p *SparkConnectProxy) AddOrUpdateSessionBackend(sessionID string, backendURL *url.URL) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.sessionBackends[sessionID] = backendURL
-}
-
-func (p *SparkConnectProxy) RemoveSessionBackend(sessionID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.sessionBackends, sessionID)
-}
-
-func (p *SparkConnectProxy) getBackendForSession(sessionID string) *url.URL {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.sessionBackends[sessionID]
-}
-
-func (p *SparkConnectProxy) getRandomBackend() *url.URL {
+func (p *SparkConnectProxy) getRandomBackend() proxy.Backend {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if len(p.knownBackends) == 0 {
@@ -82,114 +68,109 @@ func (p *SparkConnectProxy) getRandomBackend() *url.URL {
 	return p.knownBackends[idx]
 }
 
-// serveGRPC proxies incoming gRPC calls to the correct backend, tracking metrics for requests/failures/successes.
-func (p *SparkConnectProxy) serveGRPC(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.Header.Get("x-spark-connect-session-id")
-	if sessionID == "" {
-		// Missing session ID => fail
-		http.Error(w, "Missing x-spark-connect-session-id header", http.StatusBadRequest)
-		return
+func CreateSparkConnectBackend(dst string) (proxy.Backend, error) {
+	conn, err := grpc.NewClient(dst,
+		grpc.WithDefaultCallOptions(grpc.ForceCodecV2(proxy.Codec())),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, err
 	}
 
-	backend := p.getRandomBackend()
-	if backend == nil {
-		// No backend => fail
-		http.Error(w, "No backend found for the provided session ID", http.StatusNotFound)
-		return
-	}
+	return &proxy.SingleBackend{
+		GetConn: func(ctx context.Context) (context.Context, *grpc.ClientConn, error) {
+			md, _ := metadata.FromIncomingContext(ctx)
 
-	// Forward the request to the backend
-	proxy := httputil.NewSingleHostReverseProxy(backend)
-	proxy.Transport = &http2.Transport{
-		AllowHTTP: true,
-		// Use plain TCP for insecure connections.
-		DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-			return net.Dial(network, addr)
+			// Copy the inbound metadata explicitly.
+			outCtx := metadata.NewOutgoingContext(ctx, md.Copy())
+
+			return outCtx, conn, nil
 		},
-	} // For gRPC over HTTP/2
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-		req.Host = backend.Host
-		req.URL.Host = backend.Host
-		req.URL.Scheme = backend.Scheme
-	}
-	proxy.ServeHTTP(w, r)
+	}, nil
 }
 
-// handleNewSession picks a random backend, creates a new session ID, and associates it.
-func (p *SparkConnectProxy) handleNewSession(w http.ResponseWriter, r *http.Request) {
-	backend := p.getRandomBackend()
-	if backend == nil {
-		http.Error(w, "No backends available", http.StatusServiceUnavailable)
-		return
+func CreateRouter(service *SparkConnectProxy) proxy.StreamDirector {
+	director := func(ctx context.Context, fullMethodName string) (proxy.Mode, []proxy.Backend, error) {
+		backend := service.getRandomBackend()
+		return proxy.One2One, []proxy.Backend{backend}, nil
 	}
-
-	sessionID := uuid.NewString()
-	p.AddOrUpdateSessionBackend(sessionID, backend)
-
-	resp := map[string]string{"session_id": sessionID}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(resp)
+	return director
 }
 
-// controlHandler dispatches to endpoints under /control
-func (p *SparkConnectProxy) controlHandler(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.Method == http.MethodPost && r.URL.Path == "/control/session/new":
-		p.handleNewSession(w, r)
-	case r.Method == http.MethodGet && r.URL.Path == "/control/metrics":
-		// Export the prom handler
-		promhttp.Handler().ServeHTTP(w, r)
-	default:
-		http.Error(w, "Not found", http.StatusNotFound)
-	}
-}
-
-// mainHandler routes /control vs. everything else (gRPC).
-func (p *SparkConnectProxy) mainHandler(w http.ResponseWriter, r *http.Request) {
-	if len(r.URL.Path) >= 8 && r.URL.Path[:8] == "/control" {
-		p.controlHandler(w, r)
-	} else {
-		p.serveGRPC(w, r)
-	}
+// interceptorLogger adapts slog logger to interceptor logger.
+// This code is simple enough to be copied and not imported.
+func interceptorLogger(l *slog.Logger) logging.Logger {
+	return logging.LoggerFunc(func(ctx context.Context, lvl logging.Level, msg string, fields ...any) {
+		l.Log(ctx, slog.Level(lvl), msg, fields...)
+	})
 }
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	proxy := NewSparkConnectProxy()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
+	rpcLogger := logger.With("service", "gRPC/server", "component", "grpc-proxy")
 
-	// Create our middleware.
-	mdlw := middleware.New(middleware.Config{
-		Recorder: metrics.NewRecorder(metrics.Config{
-			// Pass the pre-configured registry.
-			Registry: proxy.registry,
-		}),
+	// Create prom registry
+	reg := prometheus.NewRegistry()
+	srvMetrics := grpcprom.NewServerMetrics(
+		grpcprom.WithServerHandlingTimeHistogram(),
+	)
+	reg.MustRegister(srvMetrics)
+
+	g := &run.Group{}
+
+	proxyService := NewSparkConnectProxy()
+	proxyService.AddKnownBackend("localhost:15002")
+	router := CreateRouter(proxyService)
+
+	server := grpc.NewServer(
+		grpc.ForceServerCodecV2(proxy.Codec()),
+		grpc.UnknownServiceHandler(
+			proxy.TransparentHandler(router),
+		),
+		grpc.ChainUnaryInterceptor(
+			logging.UnaryServerInterceptor(interceptorLogger(rpcLogger)),
+			srvMetrics.UnaryServerInterceptor(),
+		),
+		grpc.ChainStreamInterceptor(
+			logging.StreamServerInterceptor(interceptorLogger(rpcLogger)),
+			srvMetrics.StreamServerInterceptor()),
+	)
+
+	// Add the GRPC Server to the run group.
+	g.Add(func() error {
+		lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", 8080))
+		if err != nil {
+			return err
+		}
+		return server.Serve(lis)
+	}, func(err error) {
+		server.GracefulStop()
+		server.Stop()
 	})
 
-	// Register some known backends
-	sparkURL1, _ := url.Parse("http://127.0.0.1:15002")
-	proxy.AddKnownBackend(sparkURL1)
-
-	// Create HTTP server that uses h2c for gRPC
-	proxyFunc := http.HandlerFunc(proxy.mainHandler)
-	// wrap the proxy function using the HTTP middleware that is needed to expose metrics.
-	wrappedHandler := std.Handler("", mdlw, proxyFunc)
-
-	srv := &http.Server{
-		Addr:    ":8080",
-		Handler: h2c.NewHandler(wrappedHandler, &http2.Server{}),
+	// Create the http server for prometheus
+	httpSrv := &http.Server{
+		Addr: ":8081",
 	}
 
-	listener, err := net.Listen("tcp", srv.Addr)
-	if err != nil {
-		log.Fatalf("Failed to listen on %s: %v", srv.Addr, err)
-	}
+	// Add the http server to the run group.
+	g.Add(func() error {
+		m := http.NewServeMux()
+		m.Handle("/control/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+		httpSrv.Handler = m
+		return httpSrv.ListenAndServe()
+	}, func(err error) {
+		if err := httpSrv.Close(); err != nil {
+			log.Fatalf("failed to stop web server", "err", err)
+		}
+	})
 
-	log.Printf("Spark Connect gRPC proxy listening on %s", srv.Addr)
-	if err := srv.Serve(listener); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	// Add ctr-c handler
+	g.Add(run.SignalHandler(context.Background(), syscall.SIGINT, syscall.SIGTERM))
+
+	if err := g.Run(); err != nil {
+		log.Printf("program interrupted", "err", err)
+		os.Exit(1)
 	}
 }
