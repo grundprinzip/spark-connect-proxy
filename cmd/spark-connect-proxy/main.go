@@ -1,3 +1,17 @@
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package main
 
 import (
@@ -5,96 +19,22 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"math/rand"
 	"net"
 	"net/http"
 	"os"
-	"sync"
 	"syscall"
 
+	"github.com/grundprinzip/spark-connect-proxy/internal/control"
+
+	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"github.com/oklog/run"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/siderolabs/grpc-proxy/proxy"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 
-	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
+	scproxy "github.com/grundprinzip/spark-connect-proxy/internal/proxy"
 )
-
-type SparkConnectProxy struct {
-	// List of known backends from which new sessions pick randomly
-	knownBackends []proxy.Backend
-
-	// Protects sessionBackends and knownBackends
-	mu sync.RWMutex
-
-	// Metrics registry and specific counters
-	registry *prometheus.Registry
-}
-
-// NewSparkConnectProxy sets up our proxy with an empty routing table and a metrics registry.
-func NewSparkConnectProxy() *SparkConnectProxy {
-	// Create a metrics registry.
-	r := prometheus.NewRegistry()
-
-	return &SparkConnectProxy{
-		knownBackends: make([]proxy.Backend, 0),
-		registry:      r,
-	}
-}
-
-func (p *SparkConnectProxy) AddKnownBackend(backend string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	b, e := CreateSparkConnectBackend(backend)
-	if e != nil {
-		log.Fatalf("Error creating backend %v", e)
-		return e
-	}
-	p.knownBackends = append(p.knownBackends, b)
-	return nil
-}
-
-func (p *SparkConnectProxy) getRandomBackend() proxy.Backend {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if len(p.knownBackends) == 0 {
-		return nil
-	}
-	idx := rand.Intn(len(p.knownBackends))
-	return p.knownBackends[idx]
-}
-
-func CreateSparkConnectBackend(dst string) (proxy.Backend, error) {
-	conn, err := grpc.NewClient(dst,
-		grpc.WithDefaultCallOptions(grpc.ForceCodecV2(proxy.Codec())),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, err
-	}
-
-	return &proxy.SingleBackend{
-		GetConn: func(ctx context.Context) (context.Context, *grpc.ClientConn, error) {
-			md, _ := metadata.FromIncomingContext(ctx)
-
-			// Copy the inbound metadata explicitly.
-			outCtx := metadata.NewOutgoingContext(ctx, md.Copy())
-
-			return outCtx, conn, nil
-		},
-	}, nil
-}
-
-func CreateRouter(service *SparkConnectProxy) proxy.StreamDirector {
-	director := func(ctx context.Context, fullMethodName string) (proxy.Mode, []proxy.Backend, error) {
-		backend := service.getRandomBackend()
-		return proxy.One2One, []proxy.Backend{backend}, nil
-	}
-	return director
-}
 
 // interceptorLogger adapts slog logger to interceptor logger.
 // This code is simple enough to be copied and not imported.
@@ -117,17 +57,14 @@ func main() {
 
 	g := &run.Group{}
 
-	proxyService := NewSparkConnectProxy()
+	proxyService := scproxy.NewSparkConnectProxy()
 	if err := proxyService.AddKnownBackend("localhost:15002"); err != nil {
 		log.Fatalf("Error adding known backend: %v", err)
 	}
-	router := CreateRouter(proxyService)
 
 	server := grpc.NewServer(
 		grpc.ForceServerCodecV2(proxy.Codec()),
-		grpc.UnknownServiceHandler(
-			proxy.TransparentHandler(router),
-		),
+		grpc.UnknownServiceHandler(proxyService.CreateStreamHandler()),
 		grpc.ChainUnaryInterceptor(
 			logging.UnaryServerInterceptor(interceptorLogger(rpcLogger)),
 			srvMetrics.UnaryServerInterceptor(),
@@ -156,8 +93,8 @@ func main() {
 
 	// Add the http server to the run group.
 	g.Add(func() error {
-		m := http.NewServeMux()
-		m.Handle("/control/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+		m := control.CreateServerMux()
+		control.RegisterPromMetricsHandler(m, reg)
 		httpSrv.Handler = m
 		return httpSrv.ListenAndServe()
 	}, func(err error) {
