@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/slok/go-http-metrics/middleware/std"
 	"log"
@@ -21,8 +19,6 @@ import (
 	"net/http/httputil"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-
 	metrics "github.com/slok/go-http-metrics/metrics/prometheus"
 	"github.com/slok/go-http-metrics/middleware"
 )
@@ -37,10 +33,7 @@ type SparkConnectProxy struct {
 	mu sync.RWMutex
 
 	// Metrics registry and specific counters
-	registry  *prometheus.Registry
-	requests  prometheus.Counter
-	successes prometheus.Counter
-	failures  prometheus.Counter
+	registry *prometheus.Registry
 }
 
 // NewSparkConnectProxy sets up our proxy with an empty routing table and a metrics registry.
@@ -48,29 +41,10 @@ func NewSparkConnectProxy() *SparkConnectProxy {
 	// Create a metrics registry.
 	r := prometheus.NewRegistry()
 
-	// Create (or get) our counters.
-	rc := promauto.NewCounter(prometheus.CounterOpts{
-		Name: "request_counter",
-		Help: "The total number of processed requests",
-	})
-
-	sc := promauto.NewCounter(prometheus.CounterOpts{
-		Name: "success_counter",
-		Help: "The total number of processed requests",
-	})
-
-	fc := promauto.NewCounter(prometheus.CounterOpts{
-		Name: "fail_counter",
-		Help: "The total number of processed requests",
-	})
-
 	return &SparkConnectProxy{
 		sessionBackends: make(map[string]*url.URL),
 		knownBackends:   []*url.URL{},
 		registry:        r,
-		requests:        rc,
-		successes:       sc,
-		failures:        fc,
 	}
 }
 
@@ -110,12 +84,9 @@ func (p *SparkConnectProxy) getRandomBackend() *url.URL {
 
 // serveGRPC proxies incoming gRPC calls to the correct backend, tracking metrics for requests/failures/successes.
 func (p *SparkConnectProxy) serveGRPC(w http.ResponseWriter, r *http.Request) {
-	p.requests.Inc()
-
 	sessionID := r.Header.Get("x-spark-connect-session-id")
 	if sessionID == "" {
 		// Missing session ID => fail
-		p.failures.Inc()
 		http.Error(w, "Missing x-spark-connect-session-id header", http.StatusBadRequest)
 		return
 	}
@@ -123,13 +94,9 @@ func (p *SparkConnectProxy) serveGRPC(w http.ResponseWriter, r *http.Request) {
 	backend := p.getRandomBackend()
 	if backend == nil {
 		// No backend => fail
-		p.failures.Inc()
 		http.Error(w, "No backend found for the provided session ID", http.StatusNotFound)
 		return
 	}
-
-	// We have a valid session/back-end mapping => success (from the proxy's perspective)
-	p.successes.Inc()
 
 	// Forward the request to the backend
 	proxy := httputil.NewSingleHostReverseProxy(backend)
@@ -167,51 +134,6 @@ func (p *SparkConnectProxy) handleNewSession(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// handleMetrics returns both session-backend info AND the standard Codahale JSON from go-metrics.
-func (p *SparkConnectProxy) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	// 1) Gather session info into a map
-	type sessionData struct {
-		TotalSessions int                 `json:"total_sessions"`
-		Backends      map[string][]string `json:"backends"`
-	}
-	sessInfo := sessionData{
-		Backends: make(map[string][]string),
-	}
-
-	p.mu.RLock()
-	for sid, be := range p.sessionBackends {
-		sessInfo.TotalSessions++
-		beStr := be.String()
-		sessInfo.Backends[beStr] = append(sessInfo.Backends[beStr], sid)
-	}
-	p.mu.RUnlock()
-
-	// 2) Get the "standard" Codahale-style metrics JSON from go-metrics
-	//    We'll write into a buffer, then unmarshal it into an `interface{}`
-	//    so we can embed it in our final JSON response.
-	var buf bytes.Buffer
-	w.Header().Set("Content-Type", "application/json")
-	// Write standard metrics JSON (counters, gauges, histograms, etc.) into `buf`
-	// metricsjson.WriteJSONOnce(p.registry, time.Now(), &buf)
-
-	// Unmarshal that partial JSON into a generic interface
-	var codahale interface{}
-	if err := json.Unmarshal(buf.Bytes(), &codahale); err != nil {
-		// In case of any error, just return a 500
-		http.Error(w, fmt.Sprintf("Unable to serialize metrics: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// 3) Combine session info + codahale metrics into a single JSON object
-	combined := map[string]interface{}{
-		"sessions": sessInfo,
-		"metrics":  codahale,
-	}
-
-	// 4) Write out the final JSON
-	_ = json.NewEncoder(w).Encode(combined)
-}
-
 // controlHandler dispatches to endpoints under /control
 func (p *SparkConnectProxy) controlHandler(w http.ResponseWriter, r *http.Request) {
 	switch {
@@ -241,7 +163,10 @@ func main() {
 
 	// Create our middleware.
 	mdlw := middleware.New(middleware.Config{
-		Recorder: metrics.NewRecorder(metrics.Config{}),
+		Recorder: metrics.NewRecorder(metrics.Config{
+			// Pass the pre-configured registry.
+			Registry: proxy.registry,
+		}),
 	})
 
 	// Register some known backends
@@ -250,7 +175,7 @@ func main() {
 
 	// Create HTTP server that uses h2c for gRPC
 	proxyFunc := http.HandlerFunc(proxy.mainHandler)
-	// wrap the proxy function using the HTTP middleweare that is needed to expose metrics.
+	// wrap the proxy function using the HTTP middleware that is needed to expose metrics.
 	wrappedHandler := std.Handler("", mdlw, proxyFunc)
 
 	srv := &http.Server{
