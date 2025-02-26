@@ -85,6 +85,7 @@ func main() {
 		}
 		return server.Serve(lis)
 	}, func(err error) {
+		rpcLogger.Error("Stopping GRPC Proxy service...")
 		server.GracefulStop()
 		server.Stop()
 	})
@@ -102,6 +103,7 @@ func main() {
 		httpSrv.Handler = m
 		return httpSrv.ListenAndServe()
 	}, func(err error) {
+		rpcLogger.Error("Stopping Control HTTP service...")
 		if err := httpSrv.Close(); err != nil {
 			log.Fatalf("failed to stop web server: %v", err)
 		}
