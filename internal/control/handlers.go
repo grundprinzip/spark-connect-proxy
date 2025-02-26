@@ -16,12 +16,31 @@
 package control
 
 import (
+	"log/slog"
 	"net/http"
+
+	"github.com/gorilla/mux"
+	"github.com/grundprinzip/spark-connect-proxy/internal/proxy"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-func RegisterPromMetricsHandler(mux *http.ServeMux, reg *prometheus.Registry) {
+func RegisterPromMetricsHandler(logger *slog.Logger, mux *mux.Router, reg *prometheus.Registry) {
+	logger.Info("Registering Prometheus metrics handler")
 	mux.Handle("/control/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+}
+
+func RegisterSessionHandlers(logger *slog.Logger, mux *mux.Router, s *proxy.ProxyState) {
+	logger.Info("Registering session handlers")
+	mux.HandleFunc("/control/sessions",
+		curry(s, logger, handleNewSession)).Methods("POST")
+	mux.HandleFunc("/control/sessions/{id}",
+		curry(s, logger, handleDeleteSesssion)).Methods("DELETE")
+}
+
+func curry(p *proxy.ProxyState, l *slog.Logger, fun func(p *proxy.ProxyState, l *slog.Logger, w http.ResponseWriter, r *http.Request)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fun(p, l, w, r)
+	}
 }

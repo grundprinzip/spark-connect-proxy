@@ -45,8 +45,11 @@ func interceptorLogger(l *slog.Logger) logging.Logger {
 }
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
 	rpcLogger := logger.With("service", "gRPC/server", "component", "grpc-proxy")
+	httpLogger := logger.With("service", "http/server", "component", "control")
 
 	// Create prom registry
 	reg := prometheus.NewRegistry()
@@ -94,7 +97,8 @@ func main() {
 	// Add the http server to the run group.
 	g.Add(func() error {
 		m := control.CreateServerMux()
-		control.RegisterPromMetricsHandler(m, reg)
+		control.RegisterPromMetricsHandler(httpLogger, m, reg)
+		control.RegisterSessionHandlers(httpLogger, m, proxyService.State())
 		httpSrv.Handler = m
 		return httpSrv.ListenAndServe()
 	}, func(err error) {

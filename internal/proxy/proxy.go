@@ -18,9 +18,9 @@ package proxy
 import (
 	"context"
 	"log"
-	"math/rand"
-	"sync"
 
+	"github.com/google/uuid"
+	"github.com/grundprinzip/spark-connect-proxy/internal/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/siderolabs/grpc-proxy/proxy"
 	"google.golang.org/grpc"
@@ -29,14 +29,14 @@ import (
 )
 
 type SparkConnectProxy struct {
-	// List of known backends from which new sessions pick randomly
-	knownBackends []proxy.Backend
-
-	// Protects sessionBackends and knownBackends
-	mu sync.RWMutex
+	proxyState *ProxyState
 
 	// Metrics registry and specific counters
 	registry *prometheus.Registry
+}
+
+func (p *SparkConnectProxy) State() *ProxyState {
+	return p.proxyState
 }
 
 // NewSparkConnectProxy sets up our proxy with an empty routing table and a metrics registry.
@@ -45,37 +45,38 @@ func NewSparkConnectProxy() *SparkConnectProxy {
 	r := prometheus.NewRegistry()
 
 	return &SparkConnectProxy{
-		knownBackends: make([]proxy.Backend, 0),
-		registry:      r,
+		proxyState: NewProxyState(),
+		registry:   r,
 	}
 }
 
 func (p *SparkConnectProxy) AddKnownBackend(backend string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	b, e := createSparkConnectBackend(backend)
 	if e != nil {
 		log.Fatalf("Error creating backend %v", e)
 		return e
 	}
-	p.knownBackends = append(p.knownBackends, b)
+	p.proxyState.AddBackend(uuid.NewString(), b)
 	return nil
-}
-
-func (p *SparkConnectProxy) GetRandomBackend() proxy.Backend {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if len(p.knownBackends) == 0 {
-		return nil
-	}
-	idx := rand.Intn(len(p.knownBackends))
-	return p.knownBackends[idx]
 }
 
 func CreateRouter(service *SparkConnectProxy) proxy.StreamDirector {
 	director := func(ctx context.Context, fullMethodName string) (proxy.Mode, []proxy.Backend, error) {
-		backend := service.GetRandomBackend()
-		return proxy.One2One, []proxy.Backend{backend}, nil
+		// Extract metadata from the context.
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return proxy.One2One, nil, errors.WithString(errors.ProxyError, "no metadata found in context")
+		}
+		// Lookup the session from the context.
+		sessionIDs := md.Get(HEADER_SPARK_SESSION_ID)
+		if len(sessionIDs) != 1 {
+			return proxy.One2One, nil, errors.WithString(errors.ProxyError, "no session ID found in metadata")
+		}
+
+		// Lookup the backend for the session.
+		sessionID := sessionIDs[0]
+		backend, err := service.proxyState.GetBackendForSession(sessionID)
+		return proxy.One2One, []proxy.Backend{backend}, err
 	}
 	return director
 }

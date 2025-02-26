@@ -15,8 +15,10 @@
 
 package control
 
-import "net/http"
+import (
+	"github.com/gorilla/mux"
+)
 
-func CreateServerMux() *http.ServeMux {
-	return &http.ServeMux{}
+func CreateServerMux() *mux.Router {
+	return mux.NewRouter()
 }
