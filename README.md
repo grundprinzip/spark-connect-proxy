@@ -32,6 +32,10 @@ TODO
 
 ## Usage
 
+Please check out the following video:
+
+![Spark Connect Proxy](./docs/spark-connect-proxy.gif)
+
 To try out the proxy server you can use the following example setup:
 
 ### Start Spark with Spark Connect
