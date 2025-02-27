@@ -9,3 +9,4 @@ backend_provider:
       - url: localhost:15002
 sessions:
   - session_timeout: 600
+log_level: debug

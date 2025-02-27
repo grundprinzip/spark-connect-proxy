@@ -8,13 +8,6 @@ import (
 	"github.com/grundprinzip/spark-connect-proxy/internal/proxy"
 )
 
-// SessionHandler is a handler for session control.
-// It manages the operations from the HTTP Requests to the session management.
-type sessionHandler struct {
-	state  *proxy.ProxyState
-	router *mux.Router
-}
-
 func handleDeleteSesssion(state *proxy.ProxyState, l *slog.Logger, w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, ok := vars["id"]

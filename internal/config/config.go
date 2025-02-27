@@ -16,8 +16,9 @@
 package config
 
 import (
-	"gopkg.in/yaml.v3"
 	"os"
+
+	"gopkg.in/yaml.v3"
 )
 
 type BackendProvider struct {
@@ -34,6 +35,7 @@ type PredefinedBackendProvider struct {
 
 type Configuration struct {
 	BackendProvider BackendProvider `yaml:"backend_provider"`
+	LogLevel        string          `yaml:"log_level"`
 }
 
 func (s *BackendProvider) UnmarshalYAML(n *yaml.Node) error {

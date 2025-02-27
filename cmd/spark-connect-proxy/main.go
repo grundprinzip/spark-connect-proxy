@@ -16,14 +16,16 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
-	"github.com/grundprinzip/spark-connect-proxy/internal/config"
 	"log"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"syscall"
+
+	"github.com/grundprinzip/spark-connect-proxy/internal/config"
 
 	"github.com/grundprinzip/spark-connect-proxy/internal/control"
 
@@ -45,18 +47,47 @@ func interceptorLogger(l *slog.Logger) logging.Logger {
 	})
 }
 
+func convertLogLevel(level *string) slog.Level {
+	switch *level {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
 func main() {
+	// Parse the command line flags.
+	configFile := flag.String("config-file", "spark-connect-proxy.yaml", "The configuration file to use.")
+	logLevel := flag.String("log-level", "info", "The log level to use.")
+	flag.Parse()
+
+	// Set up the basic loggers.
+	mutLogLevel := new(slog.LevelVar)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: mutLogLevel,
 	}))
 	rpcLogger := logger.With("service", "gRPC/server", "component", "grpc-proxy")
 	httpLogger := logger.With("service", "http/server", "component", "control")
 
 	// Load default configuration file.
-	configFile := "spark-connect-proxy.yaml"
-	cfg, err := config.LoadConfig(configFile)
+	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
-		log.Fatalf("Error loading configuration file %s: %v", configFile, err)
+		logger.Error("Error loading configuration file", "file", *configFile, "error", err)
+		os.Exit(1)
+	}
+
+	// Update the log level if necessary:
+	if cfg.LogLevel != "" {
+		mutLogLevel.Set(convertLogLevel(&cfg.LogLevel))
+	} else {
+		mutLogLevel.Set(convertLogLevel(logLevel))
 	}
 
 	proxyService := scproxy.NewSparkConnectProxy()
