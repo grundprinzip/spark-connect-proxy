@@ -1,0 +1,11 @@
+# Very simple configuration file that configures exactly one backend type that provides
+# a known endpoint. The endpoint is a local spark cluster running on port 15002.
+---
+backend_provider:
+  name: manual spark
+  type: PREDEFINED
+  spec:
+    endpoints:
+      - url: localhost:15002
+sessions:
+  - session_timeout: 600

@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/grundprinzip/spark-connect-proxy/internal/config"
 	"log"
 	"log/slog"
 	"net"
@@ -51,6 +52,31 @@ func main() {
 	rpcLogger := logger.With("service", "gRPC/server", "component", "grpc-proxy")
 	httpLogger := logger.With("service", "http/server", "component", "control")
 
+	// Load default configuration file.
+	configFile := "spark-connect-proxy.yaml"
+	cfg, err := config.LoadConfig(configFile)
+	if err != nil {
+		log.Fatalf("Error loading configuration file %s: %v", configFile, err)
+	}
+
+	proxyService := scproxy.NewSparkConnectProxy()
+
+	// Check for the backends
+	provider := cfg.BackendProvider
+	if provider.Type == "PREDEFINED" {
+		predef := provider.Spec.(*config.PredefinedBackendProvider)
+		for _, endpoint := range predef.Endpoints {
+			rpcLogger.Debug("Adding backend", "backend", endpoint.Url)
+			if err := proxyService.AddKnownBackend(endpoint.Url); err != nil {
+				logger.Error("Error adding known backend", "backend", endpoint.Url, "error", err)
+				os.Exit(1)
+			}
+		}
+	} else {
+		logger.Error("Unsupported BackendProvider type", "type", provider.Type)
+		os.Exit(1)
+	}
+
 	// Create prom registry
 	reg := prometheus.NewRegistry()
 	srvMetrics := grpcprom.NewServerMetrics(
@@ -59,11 +85,6 @@ func main() {
 	reg.MustRegister(srvMetrics)
 
 	g := &run.Group{}
-
-	proxyService := scproxy.NewSparkConnectProxy()
-	if err := proxyService.AddKnownBackend("localhost:15002"); err != nil {
-		log.Fatalf("Error adding known backend: %v", err)
-	}
 
 	server := grpc.NewServer(
 		grpc.ForceServerCodecV2(proxy.Codec()),
