@@ -7,3 +7,6 @@ cmd/spark-connect-proxy/spark-connect-proxy
 
 lib
 target
+
+coverage.html
+coverage.out

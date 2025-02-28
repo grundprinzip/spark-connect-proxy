@@ -1,0 +1,117 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+
+# Intentionally has a general name.
+# because the test status check created in GitHub Actions
+# currently randomly picks any associated workflow.
+# So, the name was changed to make sense in that context too.
+# See also https://github.community/t/specify-check-suite-when-creating-a-checkrun/118380/10
+
+name: "On pull requests"
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+
+env:
+  SPARK_VERSION: '3.5.4'
+  HADOOP_VERSION: '3'
+
+permissions:
+  # Required: allow read access to the content for analysis.
+  contents: read
+  # Optional: allow read access to pull request. Use with `only-new-issues` option.
+  pull-requests: read
+  # Optional: allow write access to checks to allow the action to annotate code in the PR.
+  checks: write
+
+
+jobs:
+  build:
+    name: Build & Test Client
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        name: Setup Go
+        with:
+          go-version-file: 'go.mod'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: zulu
+
+      - name: Cache Spark Installation
+        uses: actions/cache@v4
+        id: cache
+        with:
+          key: v2-spark-${{ env.SPARK_VERSION }}-bin-hadoop${{ env.HADOOP_VERSION }}
+          path: |
+            /home/runner/deps/spark-${{ env.SPARK_VERSION }}-bin-hadoop${{ env.HADOOP_VERSION }}
+
+      - name: Setup SBT
+        uses: sbt/setup-sbt@v1
+
+      - name: Setup Apache Spark
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -x
+          echo "Apache Spark is not installed"
+          # Access the directory.
+          mkdir -p ~/deps/
+          wget -q https://dlcdn.apache.org/spark/spark-${{ env.SPARK_VERSION }}/spark-${{ env.SPARK_VERSION }}-bin-hadoop${{ env.HADOOP_VERSION }}.tgz
+          tar -xzf spark-${{ env.SPARK_VERSION }}-bin-hadoop${{ env.HADOOP_VERSION }}.tgz -C ~/deps/
+          # Delete the old file
+          rm spark-${{ env.SPARK_VERSION }}-bin-hadoop${{ env.HADOOP_VERSION }}.tgz
+
+          ls -lah ~/deps/spark-${{ env.SPARK_VERSION }}-bin-hadoop${{ env.HADOOP_VERSION }}
+          du -hs ~/deps/spark-${{ env.SPARK_VERSION }}-bin-hadoop${{ env.HADOOP_VERSION }}
+
+          # Setup the Environment Variables
+          echo "Apache Spark is ready to use"
+          echo "SPARK_HOME=/home/runner/deps/spark-${{ env.SPARK_VERSION }}-bin-hadoop${{ env.HADOOP_VERSION }}" >> "$GITHUB_ENV"
+      - name: Run Build & Test
+        run: |
+          go mod download -x
+          make gen
+          make
+          make test
+      - name: Run Code Coverage
+        run: |
+          export SPARK_HOME=/home/runner/deps/spark-${{ env.SPARK_VERSION }}-bin-hadoop${{ env.HADOOP_VERSION }}
+          make coverage
+      # Disable the code coverage check for now until https://github.com/PaloAltoNetworks/cov/issues/8 is fixed.
+      #      - uses: PaloAltoNetworks/cov@3.0.0
+      #        with:
+      #          cov_mode: coverage
+      #          main_branch: master
+      #          cov_threshold: 60
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.61

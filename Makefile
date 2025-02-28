@@ -60,6 +60,11 @@ test: $(BUILD_OUTPUT)
 	    @echo -n "     ";\
 		$(GO) test -v -run '(Test|Example)' $(BUILDFLAGS) $(TESTFLAGS) $(pkg) || exit 1)
 
+coverage: $(BUILD_OUTPUT)
+	@echo ">> TEST, \"coverage\""
+	@$(GO) test -cover -coverprofile=coverage.out -covermode=atomic ./internal/...
+	@$(GO) tool cover -html=coverage.out -o coverage.html
+
 check:
 	@echo -n ">> CHECK"
 	./dev/check-license
