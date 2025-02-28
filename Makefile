@@ -60,3 +60,8 @@ test: $(BUILD_OUTPUT)
 	    @echo -n "     ";\
 		$(GO) test -v -run '(Test|Example)' $(BUILDFLAGS) $(TESTFLAGS) $(pkg) || exit 1)
 
+check:
+	@echo -n ">> CHECK"
+	./dev/check-license
+	@echo -n ">> glongci-lint: "
+	env GOFUMPT_SPLIT_LONG_LINES=$(GOFUMPT_SPLIT_LONG_LINES) golangci-lint run

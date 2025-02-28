@@ -4,3 +4,6 @@ main
 
 # Binaries
 cmd/spark-connect-proxy/spark-connect-proxy
+
+lib
+target
