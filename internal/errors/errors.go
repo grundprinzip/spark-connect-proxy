@@ -52,7 +52,7 @@ func (w *wrappedError) Format(s fmt.State, verb rune) {
 	switch verb {
 	case 'v':
 		if s.Flag('+') {
-			_, _ = io.WriteString(s, "[sparkerror] ")
+			_, _ = io.WriteString(s, "[spark-connect-proxy-error] ")
 			_, _ = io.WriteString(s, fmt.Sprintf("Error Type: %s\n", w.errorType.Error()))
 			_, _ = io.WriteString(s, fmt.Sprintf("Error Cause: %s\n%s", w.cause.Err.Error(), w.cause.Stack()))
 			return

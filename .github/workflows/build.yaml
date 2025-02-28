@@ -98,7 +98,6 @@ jobs:
       - name: Run Build & Test
         run: |
           go mod download -x
-          make gen
           make
           make test
       - name: Run Code Coverage
