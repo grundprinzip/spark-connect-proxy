@@ -18,6 +18,8 @@ package config
 import (
 	"os"
 
+	"github.com/grundprinzip/spark-connect-proxy/connect"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,12 +27,6 @@ type BackendProvider struct {
 	Name string      `yaml:"name"`
 	Type string      `yaml:"type"`
 	Spec interface{} `yaml:"-"`
-}
-
-type PredefinedBackendProvider struct {
-	Endpoints []struct {
-		Url string `yaml:"url"`
-	} `yaml:"endpoints"`
 }
 
 type Configuration struct {
@@ -52,11 +48,12 @@ func (s *BackendProvider) UnmarshalYAML(n *yaml.Node) error {
 
 	switch s.Type {
 	case "PREDEFINED":
-		s.Spec = new(PredefinedBackendProvider)
+		spec, err := connect.NewPredefinedBackendProvider(obj.Spec)
+		s.Spec = spec
+		return err
 	default:
 		panic("type unknown")
 	}
-	return obj.Spec.Decode(s.Spec)
 }
 
 func LoadConfigData(data []byte) (*Configuration, error) {

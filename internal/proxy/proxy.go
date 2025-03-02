@@ -17,14 +17,12 @@ package proxy
 
 import (
 	"context"
-	"log"
 
-	"github.com/google/uuid"
+	"github.com/grundprinzip/spark-connect-proxy/connect"
 	"github.com/grundprinzip/spark-connect-proxy/internal/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/siderolabs/grpc-proxy/proxy"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -40,24 +38,14 @@ func (p *SparkConnectProxy) State() *ProxyState {
 }
 
 // NewSparkConnectProxy sets up our proxy with an empty routing table and a metrics registry.
-func NewSparkConnectProxy() *SparkConnectProxy {
+func NewSparkConnectProxy(bp connect.BackendProvider) *SparkConnectProxy {
 	// Create a metrics registry.
 	r := prometheus.NewRegistry()
 
 	return &SparkConnectProxy{
-		proxyState: NewProxyState(),
+		proxyState: NewProxyState(bp),
 		registry:   r,
 	}
-}
-
-func (p *SparkConnectProxy) AddKnownBackend(backend string) error {
-	b, e := createSparkConnectBackend(backend)
-	if e != nil {
-		log.Fatalf("Error creating backend %v", e)
-		return e
-	}
-	p.proxyState.AddBackend(uuid.NewString(), b)
-	return nil
 }
 
 func CreateRouter(service *SparkConnectProxy) proxy.StreamDirector {
@@ -83,24 +71,4 @@ func CreateRouter(service *SparkConnectProxy) proxy.StreamDirector {
 
 func (p *SparkConnectProxy) CreateStreamHandler() grpc.StreamHandler {
 	return proxy.TransparentHandler(CreateRouter(p))
-}
-
-func createSparkConnectBackend(dst string) (proxy.Backend, error) {
-	conn, err := grpc.NewClient(dst,
-		grpc.WithDefaultCallOptions(grpc.ForceCodecV2(proxy.Codec())),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, err
-	}
-
-	return &proxy.SingleBackend{
-		GetConn: func(ctx context.Context) (context.Context, *grpc.ClientConn, error) {
-			md, _ := metadata.FromIncomingContext(ctx)
-
-			// Copy the inbound metadata explicitly.
-			outCtx := metadata.NewOutgoingContext(ctx, md.Copy())
-
-			return outCtx, conn, nil
-		},
-	}, nil
 }

@@ -25,6 +25,8 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/grundprinzip/spark-connect-proxy/connect"
+
 	"github.com/grundprinzip/spark-connect-proxy/internal/config"
 
 	"github.com/grundprinzip/spark-connect-proxy/internal/control"
@@ -90,23 +92,24 @@ func main() {
 		mutLogLevel.Set(convertLogLevel(logLevel))
 	}
 
-	proxyService := scproxy.NewSparkConnectProxy()
-
 	// Check for the backends
 	provider := cfg.BackendProvider
-	if provider.Type == "PREDEFINED" {
-		predef := provider.Spec.(*config.PredefinedBackendProvider)
-		for _, endpoint := range predef.Endpoints {
-			rpcLogger.Debug("Adding backend", "backend", endpoint.Url)
-			if err := proxyService.AddKnownBackend(endpoint.Url); err != nil {
-				logger.Error("Error adding known backend", "backend", endpoint.Url, "error", err)
-				os.Exit(1)
-			}
-		}
-	} else {
-		logger.Error("Unsupported BackendProvider type", "type", provider.Type)
-		os.Exit(1)
-	}
+
+	proxyService := scproxy.NewSparkConnectProxy(provider.Spec.(connect.BackendProvider))
+
+	//if provider.Type == "PREDEFINED" {
+	//	predef := provider.Spec.(*connect.BackendProvider)
+	//	for _, endpoint := range predef.Endpoints {
+	//		rpcLogger.Debug("Adding backend", "backend", endpoint.Url)
+	//		if err := proxyService.AddKnownBackend(endpoint.Url); err != nil {
+	//			logger.Error("Error adding known backend", "backend", endpoint.Url, "error", err)
+	//			os.Exit(1)
+	//		}
+	//	}
+	//} else {
+	//	logger.Error("Unsupported BackendProvider type", "type", provider.Type)
+	//	os.Exit(1)
+	//}
 
 	// Create prom registry
 	reg := prometheus.NewRegistry()

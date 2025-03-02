@@ -17,10 +17,9 @@ package proxy
 
 import (
 	"fmt"
-	"maps"
-	"math/rand"
-	"slices"
 	"sync"
+
+	"github.com/grundprinzip/spark-connect-proxy/connect"
 
 	"github.com/google/uuid"
 	"github.com/grundprinzip/spark-connect-proxy/internal/errors"
@@ -40,43 +39,12 @@ type ProxyState struct {
 	// A map of session IDs to backend IDs.
 	sessionAssignments map[string]string
 
-	// A map of backend IDs to backend objects.
-	backends map[string]proxy.Backend
+	backendProvider connect.BackendProvider
+
+	loadPolicy connect.LoadPolicy
 
 	// Protects sessionBackends and knownBackends
 	mu sync.RWMutex
-}
-
-// AddBackend assigns a backend to a backend ID and registers it in the proxy state.
-func (p *ProxyState) AddBackend(backendID string, backend proxy.Backend) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.backends[backendID] = backend
-}
-
-// RemoveBackend removes a backend from the proxy state. The backend can only be removed
-// if no sessions are assigned to it.
-func (p *ProxyState) RemoveBackend(backendID string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if _, ok := p.backends[backendID]; !ok {
-		return errors.WithType(
-			fmt.Errorf("backend %s not found", backendID),
-			errors.ProxySessionError)
-	}
-
-	// Check if any sessions are assigned to the backend.
-	for _, b := range p.sessionAssignments {
-		if b == backendID {
-			return errors.WithType(
-				fmt.Errorf("backend %s is still assigned to a session", backendID),
-				errors.ProxyInitError)
-		}
-	}
-
-	delete(p.backends, backendID)
-	return nil
 }
 
 // StartSession assigns a backend to a new session and returns the session ID. The
@@ -85,11 +53,11 @@ func (p *ProxyState) StartSession() (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	sessionID := uuid.NewString()
-	backendID, err := p.randomBackend()
+	backend, err := p.loadPolicy.Next()
 	if err != nil {
 		return "", errors.WithType(err, errors.ProxySessionError)
 	}
-	p.sessionAssignments[sessionID] = backendID
+	p.sessionAssignments[sessionID] = backend.ID()
 	return sessionID, nil
 }
 
@@ -106,41 +74,43 @@ func (p *ProxyState) StopSession(id string) error {
 	return nil
 }
 
-// randomBackend returns a random backend ID from the list of
-// known backends.
-func (p *ProxyState) randomBackend() (string, error) {
-	numBackends := len(p.backends)
-	if numBackends == 0 {
-		return "", errors.WithType(
-			fmt.Errorf("no backends available"),
-			errors.ProxyInitError)
-	}
-	keys := slices.Collect(maps.Keys(p.backends))
-	return keys[rand.Intn(numBackends)], nil
-}
-
 func (p *ProxyState) GetBackendForSession(sessionID string) (proxy.Backend, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
 	if backendID, ok := p.sessionAssignments[sessionID]; ok {
-		if backend, ok := p.backends[backendID]; ok {
-			return backend, nil
+		be, err := p.backendProvider.Get(backendID)
+		if err != nil {
+			return nil, err
 		}
-		return nil, errors.WithType(
-			fmt.Errorf("backend %s not found", backendID),
-			errors.ProxySessionError)
+		return be.Connection()
 	}
-
 	return nil, errors.WithType(
 		fmt.Errorf("session %s not found", sessionID),
 		errors.ProxySessionError)
 }
 
 // NewProxyState creates a new proxy state.
-func NewProxyState() *ProxyState {
+func NewProxyState(bp connect.BackendProvider) *ProxyState {
 	return &ProxyState{
 		sessionAssignments: make(map[string]string),
-		backends:           make(map[string]proxy.Backend),
+		backendProvider:    bp,
+		loadPolicy:         &RoundRobinPolicy{bp: bp},
 	}
+}
+
+type RoundRobinPolicy struct {
+	bp      connect.BackendProvider
+	current int
+}
+
+func (p *RoundRobinPolicy) Next() (connect.Backend, error) {
+	nextIndex := (p.current + 1) % p.bp.Size()
+	p.current = nextIndex
+	// TODO expensive call, build index
+	backends, err := p.bp.List()
+	if err != nil {
+		return nil, err
+	}
+	return backends[nextIndex], nil
 }
