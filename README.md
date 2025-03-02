@@ -28,7 +28,25 @@ Now you can start the server by running
 
 ## Configuration
 
-TODO
+The proxy server can be configured using a YAML file. The following
+example shows how to configure the proxy server to connect to a
+pre-defined Spark cluster.
+
+```yaml
+---
+backend_provider:
+  # This is an arbitrary name to identify the backend provider.
+  name: manual spark
+  # Configures a pre-defined backend type that provides a list of already
+  # started Spark clusters.
+  type: PREDEFINED
+  spec:
+    endpoints:
+      # A list of endpoints that the proxy can connect to.
+      - url: localhost:15002
+# Log level to use by the proxy.
+log_level: debug
+```
 
 ## Usage
 
@@ -68,3 +86,7 @@ remote = f"sc://localhost:8080/;x-spark-connect-session-id={id}"
 spark = SparkSession.builder.remote(remote).getOrCreate()
 spark.range(10).collect()
 ```
+
+## Extending the Proxy with Custom Backend Providers
+
+TODO
