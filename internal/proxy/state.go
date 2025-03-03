@@ -66,10 +66,14 @@ func (p *ProxyState) StopSession(id string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if _, ok := p.sessionAssignments[id]; !ok {
+	backend, ok := p.sessionAssignments[id]
+	if !ok {
 		return errors.WithType(fmt.Errorf("session %s not found", id), errors.ProxySessionError)
 	}
-
+	// Stop the backend in the backend provider.
+	if err := p.loadPolicy.Release(backend); err != nil {
+		return errors.WithType(err, errors.ProxySessionError)
+	}
 	delete(p.sessionAssignments, id)
 	return nil
 }
@@ -91,20 +95,30 @@ func (p *ProxyState) GetBackendForSession(sessionID string) (proxy.Backend, erro
 }
 
 // NewProxyState creates a new proxy state.
-func NewProxyState(bp connect.BackendProvider) *ProxyState {
+func NewProxyState(bp connect.BackendProvider, loadPolicy connect.LoadPolicy) *ProxyState {
 	return &ProxyState{
 		sessionAssignments: make(map[string]string),
 		backendProvider:    bp,
-		loadPolicy:         &RoundRobinPolicy{bp: bp},
+		loadPolicy:         loadPolicy,
 	}
 }
 
+// RoundRobinPolicy is a policy that selects backends in a round-robin fashion.
 type RoundRobinPolicy struct {
 	bp      connect.BackendProvider
 	current int
 }
 
+func (p *RoundRobinPolicy) Release(id string) error {
+	return nil
+}
+
 func (p *RoundRobinPolicy) Next() (connect.Backend, error) {
+	// If there are no backends registered, try to start at least one.
+	if p.bp.Size() == 0 {
+		return p.bp.Start()
+	}
+
 	nextIndex := (p.current + 1) % p.bp.Size()
 	p.current = nextIndex
 	// TODO expensive call, build index
@@ -113,4 +127,84 @@ func (p *RoundRobinPolicy) Next() (connect.Backend, error) {
 		return nil, err
 	}
 	return backends[nextIndex], nil
+}
+
+// OneToOnePolicy is a policy that assigns a single backend to each session.
+type OneToOnePolicy struct {
+	bp connect.BackendProvider
+}
+
+func (p *OneToOnePolicy) Next() (connect.Backend, error) {
+	return p.bp.Start()
+}
+
+func (p *OneToOnePolicy) Release(id string) error {
+	return p.bp.Stop(id)
+}
+
+// MaxSessionsPolicy is a policy that limits the number of sessions that can be
+// associated with a single backend. For that reason the policy has to track how
+// many new sessions are associated with a single backend.
+type MaxSessionsPolicy struct {
+	bp connect.BackendProvider
+	// Maximum number of sessions per backend.
+	maxSize int
+	// Mapping of backend to number of sessions.
+	sessions map[string]int
+}
+
+func (p *MaxSessionsPolicy) Next() (connect.Backend, error) {
+	// If there are no backends registered, try to start at least one.
+	if p.bp.Size() == 0 {
+		be, err := p.bp.Start()
+		if err != nil {
+			return nil, err
+		}
+		p.sessions[be.ID()] = 1
+		return be, nil
+	}
+
+	// Find the backend with the fewest sessions.
+	backends, err := p.bp.List()
+	if err != nil {
+		return nil, err
+	}
+	minSessions := p.sessions[backends[0].ID()]
+	minIndex := 0
+	for i := 1; i < len(backends); i++ {
+		if p.sessions[backends[i].ID()] < minSessions {
+			minSessions = p.sessions[backends[i].ID()]
+			minIndex = i
+		}
+	}
+
+	// If the minimum number of sessions is less than the maximum size, return the backend.
+	// Otherwise, create a new backend.
+	if minSessions < p.maxSize {
+		p.sessions[backends[minIndex].ID()]++
+		return backends[minIndex], nil
+	} else {
+		be, err := p.bp.Start()
+		if err != nil {
+			return nil, err
+		}
+		p.sessions[be.ID()] = 1
+		return be, nil
+	}
+}
+
+func (p *MaxSessionsPolicy) Release(id string) error {
+	if _, ok := p.sessions[id]; !ok {
+		return fmt.Errorf("backend %s not found", id)
+	}
+	// Check if the backend has only one session left, then stop the backend.
+	if p.sessions[id] == 1 {
+		if err := p.bp.Stop(id); err != nil {
+			return err
+		}
+		delete(p.sessions, id)
+		return nil
+	}
+	p.sessions[id]--
+	return nil
 }

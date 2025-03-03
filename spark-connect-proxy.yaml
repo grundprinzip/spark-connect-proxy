@@ -27,3 +27,7 @@ backend_provider:
       - url: localhost:15002
 # Log level to use by the proxy.
 log_level: debug
+# Load policy defines how to distribute sessions across the backends. For
+# predefined the easiest one to use is the Round Robin policy
+load_policy:
+  type: ROUND_ROBIN

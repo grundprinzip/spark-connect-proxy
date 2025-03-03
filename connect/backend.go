@@ -24,8 +24,15 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// LoadPolicy is an interface that defines how backends are loaded and how
+// work is going to be distributed among them.
 type LoadPolicy interface {
+	// Next returns the next backend to use. This is only called when
+	// a new session is started.
 	Next() (Backend, error)
+	// Release is called when a session is closed. The load policy
+	// implementation can choose to release the backend or keep it.
+	Release(id string) error
 }
 
 type Backend interface {

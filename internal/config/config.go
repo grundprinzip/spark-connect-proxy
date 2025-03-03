@@ -29,9 +29,15 @@ type BackendProvider struct {
 	Spec interface{} `yaml:"-"`
 }
 
+type LoadPolicyConfig struct {
+	Type   string            `yaml:"name"`
+	Params map[string]string `yaml:"params"`
+}
+
 type Configuration struct {
-	BackendProvider BackendProvider `yaml:"backend_provider"`
-	LogLevel        string          `yaml:"log_level"`
+	BackendProvider BackendProvider  `yaml:"backend_provider"`
+	LogLevel        string           `yaml:"log_level"`
+	LoadPolicy      LoadPolicyConfig `yaml:"load_policy"`
 }
 
 func (s *BackendProvider) UnmarshalYAML(n *yaml.Node) error {

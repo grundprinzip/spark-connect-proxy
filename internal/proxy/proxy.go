@@ -18,6 +18,8 @@ package proxy
 import (
 	"context"
 
+	"github.com/grundprinzip/spark-connect-proxy/internal/config"
+
 	"github.com/grundprinzip/spark-connect-proxy/connect"
 	"github.com/grundprinzip/spark-connect-proxy/internal/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -38,12 +40,21 @@ func (p *SparkConnectProxy) State() *ProxyState {
 }
 
 // NewSparkConnectProxy sets up our proxy with an empty routing table and a metrics registry.
-func NewSparkConnectProxy(bp connect.BackendProvider) *SparkConnectProxy {
+func NewSparkConnectProxy(bp connect.BackendProvider, lp config.LoadPolicyConfig) *SparkConnectProxy {
 	// Create a metrics registry.
 	r := prometheus.NewRegistry()
 
+	// Load policy:
+	var loadPolicy connect.LoadPolicy
+	switch lp.Type {
+	case "ROUND_ROBIN":
+		loadPolicy = &RoundRobinPolicy{bp: bp}
+	default:
+		loadPolicy = &RoundRobinPolicy{bp: bp}
+	}
+
 	return &SparkConnectProxy{
-		proxyState: NewProxyState(bp),
+		proxyState: NewProxyState(bp, loadPolicy),
 		registry:   r,
 	}
 }

@@ -22,12 +22,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type PredefinedBackendProvider struct {
+// PredefinedBackendProviderConfig is the configuration for the predefined backend provider
+// it contains a list of endpoints. Later this configuration is translated into the actual
+// implementation of the backend provider interface.
+type PredefinedBackendProviderConfig struct {
 	Endpoints []struct {
 		Url string `yaml:"url"`
 	} `yaml:"endpoints"`
 }
 
+// PredefinedBackendProvider is a backend provider that provides a list of predefined backends
+// and implements the BackendProvider interface.
+type PredefinedBackendProvider struct {
+	Endpoints []Backend
+}
+
+// PredefinedBackend is a backend that is predefined and implements the Backend interface.
 type PredefinedBackend struct {
 	url string
 }
@@ -50,11 +60,21 @@ func (b *PredefinedBackend) Connection() (proxy.Backend, error) {
 }
 
 func NewPredefinedBackendProvider(node yaml.Node) (*PredefinedBackendProvider, error) {
-	provider := new(PredefinedBackendProvider)
+	provider := new(PredefinedBackendProviderConfig)
 	if err := node.Decode(provider); err != nil {
 		return nil, err
 	}
-	return provider, nil
+
+	// Convert the endpoints to backends
+	backends := make([]Backend, 0)
+	for _, endpoint := range provider.Endpoints {
+		backends = append(backends, NewPredefinedBackend(endpoint.Url))
+	}
+
+	// Return the actual backend provider
+	return &PredefinedBackendProvider{
+		Endpoints: backends,
+	}, nil
 }
 
 func (b *PredefinedBackendProvider) Start() (Backend, error) {
@@ -66,17 +86,13 @@ func (b *PredefinedBackendProvider) Stop(id string) error {
 }
 
 func (b *PredefinedBackendProvider) List() ([]Backend, error) {
-	backends := make([]Backend, 0)
-	for _, endpoint := range b.Endpoints {
-		backends = append(backends, NewPredefinedBackend(endpoint.Url))
-	}
-	return backends, nil
+	return b.Endpoints, nil
 }
 
 func (b *PredefinedBackendProvider) Get(id string) (Backend, error) {
 	for _, endpoint := range b.Endpoints {
-		if endpoint.Url == id {
-			return NewPredefinedBackend(endpoint.Url), nil
+		if endpoint.ID() == id {
+			return endpoint, nil
 		}
 	}
 	return nil, errors.New("Backend not found")

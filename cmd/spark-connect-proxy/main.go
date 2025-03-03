@@ -78,7 +78,8 @@ func main() {
 	rpcLogger := logger.With("service", "gRPC/server", "component", "grpc-proxy")
 	httpLogger := logger.With("service", "http/server", "component", "control")
 
-	// Load default configuration file.
+	// Load default configuration file. If the file is not found, exit.
+	// The configuration file is responsible as well for instantiating the backend providers.
 	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
 		logger.Error("Error loading configuration file", "file", *configFile, "error", err)
@@ -94,24 +95,9 @@ func main() {
 
 	// Check for the backends
 	provider := cfg.BackendProvider
+	proxyService := scproxy.NewSparkConnectProxy(provider.Spec.(connect.BackendProvider), cfg.LoadPolicy)
 
-	proxyService := scproxy.NewSparkConnectProxy(provider.Spec.(connect.BackendProvider))
-
-	//if provider.Type == "PREDEFINED" {
-	//	predef := provider.Spec.(*connect.BackendProvider)
-	//	for _, endpoint := range predef.Endpoints {
-	//		rpcLogger.Debug("Adding backend", "backend", endpoint.Url)
-	//		if err := proxyService.AddKnownBackend(endpoint.Url); err != nil {
-	//			logger.Error("Error adding known backend", "backend", endpoint.Url, "error", err)
-	//			os.Exit(1)
-	//		}
-	//	}
-	//} else {
-	//	logger.Error("Unsupported BackendProvider type", "type", provider.Type)
-	//	os.Exit(1)
-	//}
-
-	// Create prom registry
+	// Create prom registry for metrics.
 	reg := prometheus.NewRegistry()
 	srvMetrics := grpcprom.NewServerMetrics(
 		grpcprom.WithServerHandlingTimeHistogram(),
