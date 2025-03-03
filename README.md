@@ -90,3 +90,13 @@ spark.range(10).collect()
 ## Extending the Proxy with Custom Backend Providers
 
 TODO
+
+## Help Needed
+It would be great to further extend this project and make it more useful. For
+example there are still a lot of different topics that would be great to cover:
+
+- [ ] Add support for more backend providers
+- [ ] Add support for authentication and authorization as GRPC middleware
+- [ ] And many others ...
+
+Please reach out or create a pull request!
