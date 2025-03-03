@@ -40,5 +40,5 @@ backend_provider:
 	assert.Equal(t, "PREDEFINED", cfg.BackendProvider.Type)
 	predef := cfg.BackendProvider.Spec.(*connect.PredefinedBackendProvider)
 	assert.Len(t, predef.Endpoints, 1)
-	assert.Equal(t, "http://localhost:8080", predef.Endpoints[0].Url)
+	assert.Equal(t, "http://localhost:8080", predef.Endpoints[0].Url())
 }
