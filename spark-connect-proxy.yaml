@@ -31,3 +31,18 @@ log_level: debug
 # predefined the easiest one to use is the Round Robin policy
 load_policy:
   type: ROUND_ROBIN
+
+# Server configuration for the proxy
+server:
+  # Address to bind the server to. Format is 'host:port' or just ':port' for all interfaces
+  listen_addr: "localhost:8080"
+  # TLS configuration for secure connections
+  tls:
+    # Set to true to enable TLS
+    enabled: false
+    # Path to the certificate file (PEM format)
+    cert_file: "certs/server.crt"
+    # Path to the private key file (PEM format)
+    key_file: "certs/server.key"
+    # Optional server name, if certificate has a different hostname
+    # server_name: "example.com"

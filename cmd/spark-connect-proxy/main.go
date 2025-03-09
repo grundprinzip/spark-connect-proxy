@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log"
@@ -28,8 +29,8 @@ import (
 	"github.com/grundprinzip/spark-connect-proxy/connect"
 
 	"github.com/grundprinzip/spark-connect-proxy/internal/config"
-
 	"github.com/grundprinzip/spark-connect-proxy/internal/control"
+	"github.com/grundprinzip/spark-connect-proxy/internal/errors"
 
 	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
@@ -120,13 +121,53 @@ func main() {
 
 	// Add the GRPC Server to the run group.
 	g.Add(func() error {
-		lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", 8080))
-		if err != nil {
-			return err
+		// Use configuration for listen address or default
+		listenAddr := "localhost:8080"
+		if cfg.Server.ListenAddr != "" {
+			listenAddr = cfg.Server.ListenAddr
 		}
+
+		lis, err := net.Listen("tcp", listenAddr)
+		if err != nil {
+			return errors.WithStringf(err, "failed to listen on %s", listenAddr)
+		}
+
+		// Check if TLS is enabled
+		if cfg.Server.TLS.Enabled {
+			// Validate required TLS files
+			if cfg.Server.TLS.CertFile == "" || cfg.Server.TLS.KeyFile == "" {
+				return errors.WithStringf(
+					fmt.Errorf("missing certificate or key file"),
+					"TLS is enabled but cert_file or key_file is missing",
+				)
+			}
+
+			rpcLogger.Info("Starting secure gRPC server", "address", listenAddr)
+			// Load certificate and private key
+			cert, err := tls.LoadX509KeyPair(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
+			if err != nil {
+				return errors.WithStringf(err, "failed to load TLS certificate or key: %v", err)
+			}
+
+			// Create TLS credentials
+			tlsConfig := &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				MinVersion:   tls.VersionTLS12,
+			}
+
+			// Set server name if provided
+			if cfg.Server.TLS.ServerName != "" {
+				tlsConfig.ServerName = cfg.Server.TLS.ServerName
+			}
+
+			// Use TLS listener directly with the TLS config
+			return server.Serve(tls.NewListener(lis, tlsConfig))
+		}
+
+		rpcLogger.Info("Starting insecure gRPC server", "address", listenAddr)
 		return server.Serve(lis)
 	}, func(err error) {
-		rpcLogger.Error("Stopping GRPC Proxy service...")
+		rpcLogger.Info("Stopping GRPC Proxy service...")
 		server.GracefulStop()
 		server.Stop()
 	})
@@ -142,9 +183,18 @@ func main() {
 		control.RegisterPromMetricsHandler(httpLogger, m, reg)
 		control.RegisterSessionHandlers(httpLogger, m, proxyService.State())
 		httpSrv.Handler = m
+
+		// If TLS is enabled for gRPC, also use it for the HTTP control server
+		if cfg.Server.TLS.Enabled {
+			// Use the same certificate and key
+			httpLogger.Info("Starting secure HTTP control server", "address", httpSrv.Addr)
+			return httpSrv.ListenAndServeTLS(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
+		}
+
+		httpLogger.Info("Starting insecure HTTP control server", "address", httpSrv.Addr)
 		return httpSrv.ListenAndServe()
 	}, func(err error) {
-		rpcLogger.Error("Stopping Control HTTP service...")
+		httpLogger.Info("Stopping Control HTTP service...")
 		if err := httpSrv.Close(); err != nil {
 			log.Fatalf("failed to stop web server: %v", err)
 		}

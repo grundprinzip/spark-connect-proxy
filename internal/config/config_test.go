@@ -42,3 +42,56 @@ backend_provider:
 	assert.Len(t, predef.Endpoints, 1)
 	assert.Equal(t, "http://localhost:8080", predef.Endpoints[0].Url())
 }
+
+func TestLoadConfigWithTLS(t *testing.T) {
+	data := `
+backend_provider:
+  name: manual spark
+  type: PREDEFINED
+  spec:
+    endpoints:
+      - url: http://localhost:8080
+server:
+  listen_addr: "localhost:9090"
+  tls:
+    enabled: true
+    cert_file: "/path/to/cert.pem"
+    key_file: "/path/to/key.pem"
+    server_name: "test.example.com"
+`
+	cfg, err := LoadConfigData([]byte(data))
+	assert.NoError(t, err)
+	assert.NotNil(t, cfg)
+
+	// Check TLS configuration
+	assert.Equal(t, "localhost:9090", cfg.Server.ListenAddr)
+	assert.True(t, cfg.Server.TLS.Enabled)
+	assert.Equal(t, "/path/to/cert.pem", cfg.Server.TLS.CertFile)
+	assert.Equal(t, "/path/to/key.pem", cfg.Server.TLS.KeyFile)
+	assert.Equal(t, "test.example.com", cfg.Server.TLS.ServerName)
+}
+
+func TestLoadConfigWithoutTLS(t *testing.T) {
+	data := `
+backend_provider:
+  name: manual spark
+  type: PREDEFINED
+  spec:
+    endpoints:
+      - url: http://localhost:8080
+server:
+  listen_addr: "localhost:9090"
+  tls:
+    enabled: false
+`
+	cfg, err := LoadConfigData([]byte(data))
+	assert.NoError(t, err)
+	assert.NotNil(t, cfg)
+
+	// Check server configuration
+	assert.Equal(t, "localhost:9090", cfg.Server.ListenAddr)
+	assert.False(t, cfg.Server.TLS.Enabled)
+	assert.Empty(t, cfg.Server.TLS.CertFile)
+	assert.Empty(t, cfg.Server.TLS.KeyFile)
+	assert.Empty(t, cfg.Server.TLS.ServerName)
+}
