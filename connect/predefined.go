@@ -17,6 +17,7 @@ package connect
 
 import (
 	"errors"
+	"log/slog"
 
 	"github.com/siderolabs/grpc-proxy/proxy"
 	"gopkg.in/yaml.v3"
@@ -35,15 +36,26 @@ type PredefinedBackendProviderConfig struct {
 // and implements the BackendProvider interface.
 type PredefinedBackendProvider struct {
 	Endpoints []Backend
+	logger    *slog.Logger
 }
 
 // PredefinedBackend is a backend that is predefined and implements the Backend interface.
 type PredefinedBackend struct {
-	url string
+	url    string
+	logger *slog.Logger
+}
+
+func (b *PredefinedBackend) SetLogger(logger *slog.Logger) {
+	b.logger = logger
+	if b.logger != nil {
+		b.logger.Info("Logger set for PredefinedBackend", "url", b.url)
+	}
 }
 
 func NewPredefinedBackend(url string) *PredefinedBackend {
-	return &PredefinedBackend{url: url}
+	return &PredefinedBackend{
+		url: url,
+	}
 }
 
 func (b *PredefinedBackend) ID() string {
@@ -56,7 +68,7 @@ func (b *PredefinedBackend) Url() string {
 
 func (b *PredefinedBackend) Connection() (proxy.Backend, error) {
 	// TODO: cache this
-	return CreateSimpleProxyBackend(b.url)
+	return CreateSimpleProxyBackend(b.url, b.logger)
 }
 
 func NewPredefinedBackendProvider(node yaml.Node) (*PredefinedBackendProvider, error) {
@@ -100,4 +112,15 @@ func (b *PredefinedBackendProvider) Get(id string) (Backend, error) {
 
 func (b *PredefinedBackendProvider) Size() int {
 	return len(b.Endpoints)
+}
+
+func (b *PredefinedBackendProvider) SetLogger(logger *slog.Logger) {
+	b.logger = logger
+	if b.logger != nil {
+		b.logger.Info("Logger set for PredefinedBackendProvider",
+			"backends", len(b.Endpoints))
+		for _, backend := range b.Endpoints {
+			backend.(*PredefinedBackend).SetLogger(logger.With("component", "backend"))
+		}
+	}
 }

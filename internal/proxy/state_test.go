@@ -17,6 +17,7 @@ package proxy
 
 import (
 	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/grundprinzip/spark-connect-proxy/connect"
@@ -50,6 +51,7 @@ type testBackendProvider struct {
 	ListCalled  int
 	GetCalled   int
 	Backends    []connect.Backend
+	logger      *slog.Logger
 }
 
 func (p *testBackendProvider) Start() (connect.Backend, error) {
@@ -89,6 +91,10 @@ func (p *testBackendProvider) Get(id string) (connect.Backend, error) {
 		}
 	}
 	return nil, fmt.Errorf("Backend not found")
+}
+
+func (p *testBackendProvider) SetLogger(logger *slog.Logger) {
+	p.logger = logger
 }
 
 func TestRoundRobinPolicy_Next(t *testing.T) {
@@ -295,7 +301,7 @@ func TestMaxSessionsPolicy_MultiBackendBalance(t *testing.T) {
 func TestGetBackendForSession(t *testing.T) {
 	provider := &testBackendProvider{name: "test"}
 	loadPolicy := &OneToOnePolicy{bp: provider}
-	state := NewProxyState(provider, loadPolicy)
+	state := NewProxyState(provider, loadPolicy, nil)
 
 	// Start a session
 	sessionID, err := state.StartSession()
@@ -359,7 +365,7 @@ func TestProxyState_WithDifferentLoadPolicies(t *testing.T) {
 				t.Fatalf("Unknown load policy type: %T", tc.loadPolicy)
 			}
 
-			state := NewProxyState(bp, tc.loadPolicy)
+			state := NewProxyState(bp, tc.loadPolicy, nil)
 
 			// Start multiple sessions
 			sessionIDs := make([]string, 0, tc.sessions)

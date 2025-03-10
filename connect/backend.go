@@ -17,9 +17,11 @@ package connect
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/siderolabs/grpc-proxy/proxy"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 )
@@ -33,6 +35,8 @@ type LoadPolicy interface {
 	// Release is called when a session is closed. The load policy
 	// implementation can choose to release the backend or keep it.
 	Release(id string) error
+	// SetLogger sets the logger for this load policy
+	SetLogger(logger *slog.Logger)
 }
 
 type Backend interface {
@@ -47,12 +51,29 @@ type BackendProvider interface {
 	List() ([]Backend, error)
 	Size() int
 	Get(id string) (Backend, error)
+	// SetLogger sets the logger for this backend provider
+	SetLogger(logger *slog.Logger)
 }
 
-func CreateSimpleProxyBackend(dst string) (proxy.Backend, error) {
+// TLSConfig holds the configuration for TLS connections to backends
+type TLSConfig struct {
+	Enabled            bool
+	CertFile           string
+	KeyFile            string
+	CAFile             string
+	InsecureSkipVerify bool
+	ServerName         string
+}
+
+func CreateSimpleProxyBackend(dst string, logger *slog.Logger) (proxy.Backend, error) {
+	var transportCreds credentials.TransportCredentials
+	logger.Info("Creating insecure connection to backend", "destination", dst)
+	transportCreds = insecure.NewCredentials()
+
+	// Create the gRPC client connection
 	conn, err := grpc.NewClient(dst,
 		grpc.WithDefaultCallOptions(grpc.ForceCodecV2(proxy.Codec())),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(transportCreds))
 	if err != nil {
 		return nil, err
 	}

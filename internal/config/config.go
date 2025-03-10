@@ -80,20 +80,31 @@ func (s *BackendProvider) UnmarshalYAML(n *yaml.Node) error {
 		return err
 	}
 
-	switch s.Type {
-	case "PREDEFINED":
-		spec, err := connect.NewPredefinedBackendProvider(obj.Spec)
-		s.Spec = spec
-		return err
-	default:
-		panic("type unknown")
-	}
+	// We can't access the BackendTLS config here yet, so we'll store the YAML node
+	// and finish initialization in LoadConfigData
+	s.Spec = obj.Spec
+	return nil
 }
 
 func LoadConfigData(data []byte) (*Configuration, error) {
 	var config Configuration
 	err := yaml.Unmarshal(data, &config)
-	return &config, err
+	if err != nil {
+		return nil, err
+	}
+
+	// Now that we have the full config with TLS settings, we can initialize the backend provider
+	if config.BackendProvider.Type == "PREDEFINED" {
+		// Initialize the backend provider with TLS config
+		spec, err := connect.NewPredefinedBackendProvider(
+			config.BackendProvider.Spec.(yaml.Node))
+		if err != nil {
+			return nil, err
+		}
+		config.BackendProvider.Spec = spec
+	}
+
+	return &config, nil
 }
 
 // LoadConfig loads the configuration from the given file.

@@ -70,3 +70,9 @@ check:
 	./dev/check-license
 	@echo -n ">> glongci-lint: "
 	env GOFUMPT_SPLIT_LONG_LINES=$(GOFUMPT_SPLIT_LONG_LINES) golangci-lint run
+
+serve-docs:
+	@echo ">> DOCS: Installing godoc (if needed) and serving documentation at http://localhost:6060"
+	@go install golang.org/x/tools/cmd/godoc@latest
+	@echo ">> Starting godoc server. Press Ctrl+C to stop."
+	@$(shell go env GOPATH)/bin/godoc -http=:6060

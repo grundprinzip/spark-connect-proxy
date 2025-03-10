@@ -17,6 +17,7 @@ package proxy
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/grundprinzip/spark-connect-proxy/connect"
@@ -42,6 +43,9 @@ type ProxyState struct {
 	backendProvider connect.BackendProvider
 
 	loadPolicy connect.LoadPolicy
+
+	// Logger for proxy operations
+	logger *slog.Logger
 
 	// Protects sessionBackends and knownBackends
 	mu sync.RWMutex
@@ -95,11 +99,23 @@ func (p *ProxyState) GetBackendForSession(sessionID string) (proxy.Backend, erro
 }
 
 // NewProxyState creates a new proxy state.
-func NewProxyState(bp connect.BackendProvider, loadPolicy connect.LoadPolicy) *ProxyState {
+func NewProxyState(bp connect.BackendProvider, loadPolicy connect.LoadPolicy, logger *slog.Logger) *ProxyState {
 	return &ProxyState{
 		sessionAssignments: make(map[string]string),
 		backendProvider:    bp,
 		loadPolicy:         loadPolicy,
+		logger:             logger,
+	}
+}
+
+// SetLogger sets the logger for the proxy state and propagates it to the backend provider and load policy
+func (p *ProxyState) SetLogger(logger *slog.Logger) {
+	p.logger = logger
+	if p.backendProvider != nil {
+		p.backendProvider.SetLogger(logger.With("component", "backend_provider"))
+	}
+	if p.loadPolicy != nil {
+		p.loadPolicy.SetLogger(logger.With("component", "load_policy"))
 	}
 }
 
@@ -107,6 +123,7 @@ func NewProxyState(bp connect.BackendProvider, loadPolicy connect.LoadPolicy) *P
 type RoundRobinPolicy struct {
 	bp      connect.BackendProvider
 	current int
+	logger  *slog.Logger
 }
 
 func (p *RoundRobinPolicy) Release(id string) error {
@@ -116,6 +133,9 @@ func (p *RoundRobinPolicy) Release(id string) error {
 func (p *RoundRobinPolicy) Next() (connect.Backend, error) {
 	// If there are no backends registered, try to start at least one.
 	if p.bp.Size() == 0 {
+		if p.logger != nil {
+			p.logger.Debug("No backends registered, starting a new one")
+		}
 		return p.bp.Start()
 	}
 
@@ -126,20 +146,51 @@ func (p *RoundRobinPolicy) Next() (connect.Backend, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if p.logger != nil {
+		p.logger.Debug("Selected backend in round-robin",
+			"index", nextIndex,
+			"backend_id", backends[nextIndex].ID())
+	}
 	return backends[nextIndex], nil
+}
+
+func (p *RoundRobinPolicy) SetLogger(logger *slog.Logger) {
+	p.logger = logger
+	if p.logger != nil {
+		p.logger.Info("Logger set for RoundRobinPolicy")
+	}
 }
 
 // OneToOnePolicy is a policy that assigns a single backend to each session.
 type OneToOnePolicy struct {
-	bp connect.BackendProvider
+	bp     connect.BackendProvider
+	logger *slog.Logger
 }
 
 func (p *OneToOnePolicy) Next() (connect.Backend, error) {
-	return p.bp.Start()
+	if p.logger != nil {
+		p.logger.Debug("Starting new backend for session")
+	}
+	backend, err := p.bp.Start()
+	if err == nil && p.logger != nil {
+		p.logger.Debug("Started new backend", "backend_id", backend.ID())
+	}
+	return backend, err
 }
 
 func (p *OneToOnePolicy) Release(id string) error {
+	if p.logger != nil {
+		p.logger.Debug("Stopping backend", "backend_id", id)
+	}
 	return p.bp.Stop(id)
+}
+
+func (p *OneToOnePolicy) SetLogger(logger *slog.Logger) {
+	p.logger = logger
+	if p.logger != nil {
+		p.logger.Info("Logger set for OneToOnePolicy")
+	}
 }
 
 // MaxSessionsPolicy is a policy that limits the number of sessions that can be
@@ -151,16 +202,24 @@ type MaxSessionsPolicy struct {
 	maxSize int
 	// Mapping of backend to number of sessions.
 	sessions map[string]int
+	// Logger for policy operations
+	logger *slog.Logger
 }
 
 func (p *MaxSessionsPolicy) Next() (connect.Backend, error) {
 	// If there are no backends registered, try to start at least one.
 	if p.bp.Size() == 0 {
+		if p.logger != nil {
+			p.logger.Debug("No backends registered, starting a new one")
+		}
 		be, err := p.bp.Start()
 		if err != nil {
 			return nil, err
 		}
 		p.sessions[be.ID()] = 1
+		if p.logger != nil {
+			p.logger.Debug("Started new backend", "backend_id", be.ID(), "sessions", 1)
+		}
 		return be, nil
 	}
 
@@ -181,30 +240,63 @@ func (p *MaxSessionsPolicy) Next() (connect.Backend, error) {
 	// If the minimum number of sessions is less than the maximum size, return the backend.
 	// Otherwise, create a new backend.
 	if minSessions < p.maxSize {
-		p.sessions[backends[minIndex].ID()]++
+		backendID := backends[minIndex].ID()
+		p.sessions[backendID]++
+		if p.logger != nil {
+			p.logger.Debug("Using existing backend",
+				"backend_id", backendID,
+				"sessions", p.sessions[backendID])
+		}
 		return backends[minIndex], nil
 	} else {
+		if p.logger != nil {
+			p.logger.Debug("All backends at max capacity, starting a new one",
+				"max_sessions", p.maxSize)
+		}
 		be, err := p.bp.Start()
 		if err != nil {
 			return nil, err
 		}
 		p.sessions[be.ID()] = 1
+		if p.logger != nil {
+			p.logger.Debug("Started new backend", "backend_id", be.ID(), "sessions", 1)
+		}
 		return be, nil
 	}
 }
 
 func (p *MaxSessionsPolicy) Release(id string) error {
 	if _, ok := p.sessions[id]; !ok {
+		if p.logger != nil {
+			p.logger.Warn("Attempted to release unknown backend", "backend_id", id)
+		}
 		return fmt.Errorf("backend %s not found", id)
 	}
+
 	// Check if the backend has only one session left, then stop the backend.
 	if p.sessions[id] == 1 {
+		if p.logger != nil {
+			p.logger.Debug("Stopping backend with last session", "backend_id", id)
+		}
 		if err := p.bp.Stop(id); err != nil {
 			return err
 		}
 		delete(p.sessions, id)
 		return nil
 	}
+
 	p.sessions[id]--
+	if p.logger != nil {
+		p.logger.Debug("Released session from backend",
+			"backend_id", id,
+			"remaining_sessions", p.sessions[id])
+	}
 	return nil
+}
+
+func (p *MaxSessionsPolicy) SetLogger(logger *slog.Logger) {
+	p.logger = logger
+	if p.logger != nil {
+		p.logger.Info("Logger set for MaxSessionsPolicy", "max_sessions", p.maxSize)
+	}
 }
