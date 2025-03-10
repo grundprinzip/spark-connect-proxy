@@ -13,8 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Very simple configuration file that configures exactly one backend type that provides
-# a known endpoint. The endpoint is a local spark cluster running on port 15002.
+# Sample configuration file with TLS enabled for secure connections
 ---
 backend_provider:
   name: manual spark
@@ -39,7 +38,7 @@ server:
   # TLS configuration for secure connections
   tls:
     # Set to true to enable TLS
-    enabled: false
+    enabled: true
     # Path to the certificate file (PEM format)
     cert_file: "certs/server.crt"
     # Path to the private key file (PEM format)

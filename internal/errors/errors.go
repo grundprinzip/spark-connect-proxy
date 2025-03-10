@@ -71,4 +71,5 @@ var (
 	ProxyError        errorType = errorType(errors.New("proxy error"))
 	ProxySessionError errorType = errorType(errors.New("proxy session error"))
 	ProxyInitError    errorType = errorType(errors.New("proxy init error"))
+	TLSConfigError    errorType = errorType(errors.New("TLS configuration error"))
 )

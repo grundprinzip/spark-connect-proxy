@@ -34,10 +34,38 @@ type LoadPolicyConfig struct {
 	Params map[string]string `yaml:"params"`
 }
 
+// TLSConfig defines the TLS/SSL configuration for secure connections
+type TLSConfig struct {
+	// Enabled indicates whether TLS should be used for connections
+	Enabled bool `yaml:"enabled"`
+	// CertFile is the path to the certificate file (PEM format)
+	CertFile string `yaml:"cert_file"`
+	// KeyFile is the path to the private key file (PEM format)
+	KeyFile string `yaml:"key_file"`
+	// ServerName is the server name to use in the TLS configuration (optional)
+	// This is useful when the certificate has a different hostname than the one being used
+	ServerName string `yaml:"server_name,omitempty"`
+}
+
+// ServerConfig defines the server configuration for the proxy
+type ServerConfig struct {
+	// ListenAddr is the address to listen on (e.g., "localhost:8080", ":8080")
+	// If empty, defaults to "localhost:8080"
+	ListenAddr string `yaml:"listen_addr"`
+	// TLS defines the TLS configuration for secure connections
+	TLS TLSConfig `yaml:"tls"`
+}
+
+// Configuration represents the complete configuration for the Spark Connect Proxy
 type Configuration struct {
-	BackendProvider BackendProvider  `yaml:"backend_provider"`
-	LogLevel        string           `yaml:"log_level"`
-	LoadPolicy      LoadPolicyConfig `yaml:"load_policy"`
+	// BackendProvider configures the backend connection provider
+	BackendProvider BackendProvider `yaml:"backend_provider"`
+	// LogLevel defines the logging level (debug, info, warn, error)
+	LogLevel string `yaml:"log_level"`
+	// LoadPolicy defines how to distribute sessions across backends
+	LoadPolicy LoadPolicyConfig `yaml:"load_policy"`
+	// Server configures the proxy server settings including TLS
+	Server ServerConfig `yaml:"server"`
 }
 
 func (s *BackendProvider) UnmarshalYAML(n *yaml.Node) error {
