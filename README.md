@@ -22,6 +22,10 @@ To install Spark Connect Proxy simply checkout this repository and run
 make
 ```
 
+Alternatively, you can download the latest binaries from the release page.
+The binaries are pre-compiled for Linux, Apple, and Windows for both X86 and ARM
+architectures.
+
 Now you can start the server by running
 
 ```bash
