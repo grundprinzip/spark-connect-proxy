@@ -97,13 +97,8 @@ jobs:
       - name: Upload release checksum
         run: |
           cd dist
-          if [[ "${{ matrix.os }}" == "windows" ]]; then
-            sha256sum "${OUTPUT%.exe}.zip" > "${OUTPUT%.exe}.zip.sha256"
-            echo "CHECKSUM=${OUTPUT%.exe}.zip.sha256" >> $GITHUB_ENV
-          else
-            sha256sum "${OUTPUT}.tar.gz" > "${OUTPUT}.tar.gz.sha256"
-            echo "CHECKSUM=${OUTPUT}.tar.gz.sha256" >> $GITHUB_ENV
-          fi
+          sha256sum "${{ env.ARCHIVE }}" > "${{ env.ARCHIVE }}.sha256"
+          echo "CHECKSUM="${{ env.ARCHIVE }}.sha256" >> $GITHUB_ENV
           cd ..
 
       - name: Upload checksum as release asset
