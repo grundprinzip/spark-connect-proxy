@@ -98,7 +98,7 @@ jobs:
         run: |
           cd dist
           sha256sum "${{ env.ARCHIVE }}" > "${{ env.ARCHIVE }}.sha256"
-          echo "CHECKSUM="${{ env.ARCHIVE }}.sha256" >> $GITHUB_ENV
+          echo "CHECKSUM=${{ env.ARCHIVE }}.sha256" >> $GITHUB_ENV
           cd ..
 
       - name: Upload checksum as release asset
