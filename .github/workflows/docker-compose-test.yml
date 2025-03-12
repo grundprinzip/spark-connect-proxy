@@ -28,13 +28,12 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        
-      # Install Docker Compose
-      - name: Install Docker Compose
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y docker-compose-plugin
-          docker compose version
+
+      # Set up Docker Compose
+      - name: Set up Docker Compose
+        uses: ndeloof/install-compose-action@v0.0.1
+        with:
+          version: v2.23.3
 
       - name: Start Docker Compose
         run: docker compose up --build -d
@@ -44,14 +43,18 @@ jobs:
           # Wait for the test container to complete
           timeout=300  # 5 minutes
           start_time=$(date +%s)
-          
+
+          # Get the actual container name (might vary by environment)
+          test_container=$(docker ps -a --format '{{.Names}}' | grep -i test)
+          echo "Test container name: $test_container"
+
           while true; do
             # Check if test container is still running
-            if ! docker ps | grep -q spark-connect-proxy-test-1; then
+            if ! docker ps | grep -q "$test_container"; then
               echo "Test container has finished running"
               break
             fi
-            
+
             # Check timeout
             current_time=$(date +%s)
             elapsed=$((current_time - start_time))
@@ -59,22 +62,26 @@ jobs:
               echo "Timeout waiting for test container to complete"
               exit 1
             fi
-            
+
             echo "Waiting for test container to complete... ($elapsed seconds elapsed)"
             sleep 5
           done
 
       - name: Check test container exit code
         run: |
+          # Get the actual container name (might vary by environment)
+          test_container=$(docker ps -a --format '{{.Names}}' | grep -i test)
+          echo "Test container name: $test_container"
+
           # Get the exit code of the test container
-          exit_code=$(docker inspect --format='{{.State.ExitCode}}' spark-connect-proxy-test-1)
-          
+          exit_code=$(docker inspect --format='{{.State.ExitCode}}' "$test_container")
+
           if [ "$exit_code" -eq 0 ]; then
             echo "Test container exited successfully with code 0"
           else
             echo "Test container failed with exit code $exit_code"
             # Print logs from the test container
-            docker logs spark-connect-proxy-test-1
+            docker logs "$test_container"
             exit 1
           fi
 
