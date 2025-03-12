@@ -5,6 +5,10 @@ main
 # Binaries
 cmd/spark-connect-proxy/spark-connect-proxy
 
+# Certificate files
+certs/*.crt
+certs/*.key
+
 lib
 target
 

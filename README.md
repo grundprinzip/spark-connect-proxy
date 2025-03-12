@@ -26,6 +26,15 @@ Now you can start the server by running
 ./cmd/spark-connect-proxy/spark-connect-proxy
 ```
 
+### Docker Setup
+If you want to see how to setup the Spark Connect Proxy in a multi-backend scenario,
+please have a look at the example using Docker Compose. This setup includes:
+- Spark Connect Proxy
+- Two Spark instances with Spark Connect enabled
+- Automatic testing container
+
+See the [Docker Compose Setup](README.docker.md) for additional documentation.
+
 ## Configuration
 
 The proxy server can be configured using a YAML file. The following
