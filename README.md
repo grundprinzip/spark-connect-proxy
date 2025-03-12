@@ -1,5 +1,7 @@
 # Spark Connect Proxy
 
+[![Docker Compose Test](https://github.com/grundprinzip/spark-connect-proxy/actions/workflows/docker-compose-test.yml/badge.svg)](https://github.com/grundprinzip/spark-connect-proxy/actions/workflows/docker-compose-test.yml)
+
 When using Spark Connect as part of Apache Spark it is possible to
 seamlessly connect to the Spark Cluster from PySpark directly without
 running co-located to the driver.
